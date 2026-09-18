@@ -2982,6 +2982,19 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', engineStatus, uptimeSeconds: Math.floor((Date.now() - bootTimestamp) / 1000) });
 });
 
+app.get('/api/trading/live-readiness', async (req, res) => {
+  const configured = binanceConfigured();
+  if (!configured) return res.json({ ready: false, tradingMode, reason: 'Binance credentials are not configured.' });
+  try {
+    const client = new BinanceSpotClient();
+    const permissions = await client.accountRestrictions();
+    const ready = permissions?.enableReading === true && permissions?.enableSpotAndMarginTrading === true;
+    res.json({ ready, tradingMode, exchange: 'BINANCE', permissions: { enableReading: permissions?.enableReading, enableSpotAndMarginTrading: permissions?.enableSpotAndMarginTrading, enableWithdrawals: permissions?.enableWithdrawals, ipRestrict: permissions?.ipRestrict } });
+  } catch (error:any) {
+    res.status(502).json({ ready:false, tradingMode, exchange:'BINANCE', error:error?.message || String(error) });
+  }
+});
+
 app.get('/api/trading/state', (req, res) => {
   const assetsArray = Object.values(initialAssets).map((a) => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -3094,6 +3107,9 @@ app.post('/api/trading/engine-control', (req, res) => {
   }
 
   if (mode && ['PAPER', 'DRY_RUN', 'LIVE_VAULT'].includes(mode)) {
+    if (mode === 'LIVE_VAULT' && !binanceConfigured()) {
+      return res.status(409).json({ success: false, error: 'LIVE_VAULT requires BINANCE_API_KEY and BINANCE_API_SECRET configured in the deployment secret store.' });
+    }
     const prev = tradingMode;
     tradingMode = mode;
     recordAudit('TRADING_MODE_CHANGED', { from: prev, to: mode, actor: AUTHORIZED_OWNER.email }, 'SECURITY');
