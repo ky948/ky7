@@ -17,6 +17,7 @@ import {
   StrategyCandidate,
   StrategyGeneratorState,
 } from './src/types';
+import { BinanceSpotClient, binanceConfigured } from './src/binance';
 
 const app = express();
 const PORT = 3000;
@@ -84,15 +85,15 @@ recordAudit('SYSTEM_BOOTSTRAP', { status: 'INITIALIZED', owner: AUTHORIZED_OWNER
 
 // Trading Engine State
 let engineStatus: 'RUNNING' | 'PAUSED' | 'KILL_SWITCHED' = 'RUNNING';
-let tradingMode: 'PAPER' | 'DRY_RUN' | 'LIVE_VAULT' = 'PAPER';
+let tradingMode: 'PAPER' | 'DRY_RUN' | 'LIVE_VAULT' = process.env.TRADING_MODE === 'LIVE_VAULT' ? 'LIVE_VAULT' : 'PAPER';
 
 let vaultConfig = {
   exchange: 'Binance / Bybit Private Institutional',
-  apiKeyMasked: 'vm948_sec_live_********************48f9',
-  apiSecretSet: true,
-  status: 'UNLOCKED_READ_TRADE' as 'SEALED' | 'UNLOCKED_READ_TRADE',
-  withdrawalsEnabled: false, // Strictly hardcoded to false for cybersecurity isolation
-  whitelistedIPOnly: true,
+  apiKeyMasked: process.env.BINANCE_API_KEY ? `${process.env.BINANCE_API_KEY.slice(0, 6)}...${process.env.BINANCE_API_KEY.slice(-4)}` : 'NOT_CONFIGURED',
+  apiSecretSet: Boolean(process.env.BINANCE_API_SECRET),
+  status: binanceConfigured() ? 'UNLOCKED_READ_TRADE' : 'SEALED',
+  withdrawalsEnabled: process.env.BINANCE_ENABLE_WITHDRAWALS === 'true',
+  whitelistedIPOnly: process.env.BINANCE_IP_RESTRICTION_REQUIRED !== 'false',
 };
 
 // Portfolio state
@@ -125,10 +126,10 @@ interface SweepRecord {
 }
 
 let profitSweeperConfig = {
-  destinationWallet: '0x948B227c9F01a88A42e4310E3D1eB34927f8a9b1',
+  destinationWallet: process.env.DESTINATION_WALLET || '',
   minThresholdUsdt: 5000.0,
   sweepPercentage: 50.0, // Sweep 50% of eligible realized profit to cold storage
-  autoSweepEnabled: true,
+  autoSweepEnabled: process.env.PROFIT_SWEEP_ENABLED === 'true',
   totalSweptUsdt: 4000.0,
   pendingEligibleUsdt: 8430.5,
   lastSweepTimestamp: Date.now() - 86400000,
@@ -2808,14 +2809,15 @@ function executeProfitSweepInternal(percentage: number, trigger: string) {
   const sweepAmount = Number((portfolio.eligibleSweepUsdt * (percentage / 100)).toFixed(2));
   if (sweepAmount <= 0) return null;
 
+  if (tradingMode !== 'LIVE_VAULT') throw new Error('Real profit sweeps require LIVE_VAULT mode.');
   const record: SweepRecord = {
     id: `swp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     timestamp: Date.now(),
     amountUsdt: sweepAmount,
     destinationWallet: profitSweeperConfig.destinationWallet,
-    txHash: `0x${crypto.randomBytes(32).toString('hex')}`,
-    status: 'CONFIRMED',
-    blockNumber: 21894000 + Math.floor(Math.random() * 1000),
+    txHash: '',
+    status: 'PENDING',
+    blockNumber: 0,
   };
 
   profitSweeperConfig.totalSweptUsdt = Number((profitSweeperConfig.totalSweptUsdt + sweepAmount).toFixed(2));
@@ -3130,66 +3132,38 @@ app.post('/api/trading/position/update-sl-tp', (req, res) => {
 });
 
 // Manual Order Placement (Owner override)
-app.post('/api/trading/order/manual', (req, res) => {
+app.post('/api/trading/order/manual', async (req, res) => {
   const { symbol, side, type, price, size } = req.body;
-  if (!symbol || !side || !type || !size) {
-    return res.status(400).json({ error: 'Missing required order fields' });
+  if (!symbol || !side || !type || !size) return res.status(400).json({ error: 'Missing required order fields' });
+  if (tradingMode === 'LIVE_VAULT') {
+    try {
+      const client = new BinanceSpotClient();
+      const result = await client.placeOrder({
+        symbol, side, type,
+        quantity: Number(size),
+        price: type === 'LIMIT' ? Number(price) : undefined,
+        clientOrderId: `ky7_${Date.now()}`,
+      });
+      recordAudit('LIVE_BINANCE_ORDER_SUBMITTED', { symbol, side, type, size, exchangeOrderId: result.orderId, clientOrderId: result.clientOrderId }, 'SECURITY');
+      return res.json({ success: true, live: true, exchange: 'BINANCE', order: result });
+    } catch (error:any) {
+      recordAudit('LIVE_BINANCE_ORDER_REJECTED', { symbol, side, type, size, error: error?.message || String(error) }, 'CRITICAL');
+      return res.status(502).json({ error: error?.message || 'Live exchange order failed' });
+    }
   }
-
   const asset = initialAssets[symbol];
   if (!asset) return res.status(400).json({ error: 'Invalid symbol' });
-
   const orderPrice = type === 'MARKET' ? asset.price : Number(price);
-
   if (type === 'MARKET') {
-    // Fill immediately as position
-    const newPos: Position = {
-      id: `pos_man_${Date.now()}`,
-      symbol,
-      side: side === 'BUY' ? 'LONG' : 'SHORT',
-      size: Number(size),
-      entryPrice: orderPrice,
-      markPrice: orderPrice,
-      liquidationPrice: side === 'BUY' ? Number((orderPrice * 0.6).toFixed(2)) : Number((orderPrice * 1.4).toFixed(2)),
-      unrealizedPnl: 0,
-      unrealizedPnlPercent: 0,
-      leverage: 2,
-      stopLoss: side === 'BUY' ? Number((orderPrice * 0.98).toFixed(2)) : Number((orderPrice * 1.02).toFixed(2)),
-      takeProfit: side === 'BUY' ? Number((orderPrice * 1.04).toFixed(2)) : Number((orderPrice * 0.96).toFixed(2)),
-      createdAt: Date.now(),
-      strategyId: 'MANUAL_OWNER_DISCRETION',
-    };
-
+    const newPos: Position = { id: `pos_man_${Date.now()}`, symbol, side: side === 'BUY' ? 'LONG' : 'SHORT', size: Number(size), entryPrice: orderPrice, markPrice: orderPrice, liquidationPrice: side === 'BUY' ? Number((orderPrice * 0.6).toFixed(2)) : Number((orderPrice * 1.4).toFixed(2)), unrealizedPnl: 0, unrealizedPnlPercent: 0, leverage: 2, stopLoss: side === 'BUY' ? Number((orderPrice * 0.98).toFixed(2)) : Number((orderPrice * 1.02).toFixed(2)), takeProfit: side === 'BUY' ? Number((orderPrice * 1.04).toFixed(2)) : Number((orderPrice * 0.96).toFixed(2)), createdAt: Date.now(), strategyId: 'MANUAL_OWNER_DISCRETION' };
     activePositions.push(newPos);
-    recordAudit('MANUAL_MARKET_ORDER_FILLED', {
-      symbol,
-      side,
-      size,
-      price: orderPrice,
-      actor: AUTHORIZED_OWNER.email,
-    }, 'SECURITY');
-
-    res.json({ success: true, filled: true, position: newPos });
-  } else {
-    // Limit order
-    const order: Order = {
-      id: `ord_${Date.now()}`,
-      symbol,
-      side,
-      type,
-      price: orderPrice,
-      size: Number(size),
-      filledSize: 0,
-      status: 'PENDING',
-      createdAt: Date.now(),
-      strategyId: 'MANUAL_OWNER_DISCRETION',
-      reason: 'Direct Owner Discretionary Order',
-    };
-
-    openOrders.push(order);
-    recordAudit('MANUAL_LIMIT_ORDER_STAGED', { orderId: order.id, symbol, price: orderPrice, size });
-    res.json({ success: true, filled: false, order });
+    recordAudit('MANUAL_MARKET_ORDER_FILLED', { symbol, side, size, price: orderPrice, actor: AUTHORIZED_OWNER.email }, 'SECURITY');
+    return res.json({ success: true, filled: true, position: newPos });
   }
+  const order: Order = { id: `ord_${Date.now()}`, symbol, side, type, price: orderPrice, size: Number(size), filledSize: 0, status: 'PENDING', createdAt: Date.now(), strategyId: 'MANUAL_OWNER_DISCRETION', reason: 'Direct Owner Discretionary Order' };
+  openOrders.push(order);
+  recordAudit('MANUAL_LIMIT_ORDER_STAGED', { orderId: order.id, symbol, price: orderPrice, size });
+  return res.json({ success: true, filled: false, order });
 });
 
 // Cancel Order
@@ -3604,21 +3578,22 @@ app.post('/api/trading/profit-sweep/update', (req, res) => {
   res.json({ success: true, profitSweeperConfig });
 });
 
-app.post('/api/trading/profit-sweep/execute', (req, res) => {
+app.post('/api/trading/profit-sweep/execute', async (req, res) => {
   const { sweepPercentage = profitSweeperConfig.sweepPercentage } = req.body;
-  const sweepRecord = executeProfitSweepInternal(Number(sweepPercentage), 'OWNER_MANUAL_TRIGGER');
-
-  if (!sweepRecord) {
-    return res.status(400).json({ error: 'No eligible realized profits available for sweep at this time.' });
+  if (tradingMode !== 'LIVE_VAULT') return res.status(409).json({ error: 'Real withdrawals require LIVE_VAULT mode.' });
+  if (!profitSweeperConfig.destinationWallet) return res.status(400).json({ error: 'DESTINATION_WALLET is not configured.' });
+  const sweepAmount = Number((portfolio.eligibleSweepUsdt * (Number(sweepPercentage) / 100)).toFixed(2));
+  if (sweepAmount < profitSweeperConfig.minThresholdUsdt) return res.status(400).json({ error: 'Eligible realized profit is below the configured sweep threshold.' });
+  try {
+    const client = new BinanceSpotClient();
+    const result = await client.withdraw({ coin: process.env.PROFIT_SWEEP_ASSET || 'USDT', address: profitSweeperConfig.destinationWallet, amount: sweepAmount, network: process.env.DESTINATION_NETWORK });
+    const sweepRecord = { id: `swp_${Date.now()}`, timestamp: Date.now(), amountUsdt: sweepAmount, destinationWallet: profitSweeperConfig.destinationWallet, txHash: result?.id || result?.txId || '', status: 'PENDING' as const, blockNumber: 0 };
+    recordAudit('LIVE_BINANCE_WITHDRAWAL_SUBMITTED', { amountUsdt: sweepAmount, destinationWallet: profitSweeperConfig.destinationWallet, withdrawalId: result?.id || result?.txId }, 'SECURITY');
+    return res.json({ success: true, exchange: 'BINANCE', withdrawal: result, sweepRecord });
+  } catch (error:any) {
+    recordAudit('LIVE_BINANCE_WITHDRAWAL_REJECTED', { amountUsdt: sweepAmount, destinationWallet: profitSweeperConfig.destinationWallet, error: error?.message || String(error) }, 'CRITICAL');
+    return res.status(502).json({ error: error?.message || 'Live withdrawal failed' });
   }
-
-  res.json({
-    success: true,
-    sweepRecord,
-    profitSweeperConfig,
-    eligibleSweepUsdt: portfolio.eligibleSweepUsdt,
-    totalSweptUsdt: portfolio.totalSweptUsdt,
-  });
 });
 
 // Non-Critical Software Component Validator APIs
