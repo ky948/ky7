@@ -1,0 +1,6 @@
+{
+  "name": "Private Autonomous Crypto Trading Platform",
+  "description": "Private single-user autonomous cryptocurrency quantitative trading platform with multi-strategy algorithmic execution, real-time risk controls, and quantitative AI analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
