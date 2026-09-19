@@ -2687,6 +2687,17 @@ const liveInterval=setInterval(async()=>{
     const dailyLoss=((snap.navUsdt-liveDayStartNav)/Math.max(1,liveDayStartNav))*100;
     if(dailyLoss<=-Number(process.env.MAX_DAILY_LOSS||0.03)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DAILY_LOSS_PAUSE',{dailyLoss},'CRITICAL');return;}
     if(engineStatus==='RUNNING')await runLiveAutonomousCycle();
+    if(process.env.PROFIT_SWEEP_ENABLED==='true'&&process.env.BINANCE_ENABLE_WITHDRAWALS==='true'&&profitSweeperConfig.autoSweepEnabled){
+      const principal=Number(process.env.LIVE_PRINCIPAL_USDT||0);
+      const eligible=Math.max(0,Number((snap.freeUsdt-principal).toFixed(2)));
+      if(principal>0&&eligible>=profitSweeperConfig.minThresholdUsdt){
+        const sweepAmount=Number((eligible*(profitSweeperConfig.sweepPercentage/100)).toFixed(2));
+        if(sweepAmount>0){
+          const result=await getLiveEngine().getClient().withdraw({coin:process.env.PROFIT_SWEEP_ASSET||'USDT',address:profitSweeperConfig.destinationWallet,amount:sweepAmount,network:process.env.DESTINATION_NETWORK});
+          recordAudit('LIVE_AUTOMATIC_PROFIT_WITHDRAWAL_SUBMITTED',{amountUsdt:sweepAmount,destinationWallet:profitSweeperConfig.destinationWallet,withdrawalId:result?.id||result?.txId},'SECURITY');
+        }
+      }
+    }
   }catch(error:any){recordAudit('LIVE_RECONCILIATION_ERROR',{error:error?.message||String(error)},'CRITICAL');}
 },5000);
 
@@ -3095,7 +3106,7 @@ app.get('/api/trading/state', async (req, res) => {
     signalFeed:liveSnapshot?[]:signalFeed.slice(0,30),
     vaultConfig:{exchange:vaultConfig.exchange,apiKeyMasked:vaultConfig.apiKeyMasked,apiSecretSet:vaultConfig.apiSecretSet,status:vaultConfig.status,withdrawalsEnabled:vaultConfig.withdrawalsEnabled,whitelistedIPOnly:vaultConfig.whitelistedIPOnly},
     liveAccount:liveSnapshot?{balances:liveSnapshot.balances,freeUsdt:liveSnapshot.freeUsdt,navUsdt:liveSnapshot.navUsdt,asOf:liveSnapshot.timestamp}:null,
-    systemHealth,authorizedOwner:AUTHORIZED_OWNER,gridConfigs,profitSweeperConfig,incubatedStrategies,softwareComponents,learningLoopState,
+    systemHealth,authorizedOwner:AUTHORIZED_OWNER,gridConfigs,profitSweeperConfig:liveSnapshot?{...profitSweeperConfig,sweepHistory:[],pendingEligibleUsdt:Math.max(0,Number((liveSnapshot.freeUsdt-Number(process.env.LIVE_PRINCIPAL_USDT||0)).toFixed(2)))}:profitSweeperConfig,incubatedStrategies,softwareComponents,learningLoopState,
     activeStrategyVersion:learningLoopState.activeVersion,
     updateManagerState:{currentSystemVersion:updateManagerSystemState.currentSystemVersion,previousKnownGoodVersion:updateManagerSystemState.previousKnownGoodVersion,lastCheckTimestamp:updateManagerSystemState.lastCheckTimestamp,autoCheckEnabled:updateManagerSystemState.autoCheckEnabled,isPipelineRunning:updateManagerSystemState.isPipelineRunning,activeUpdateId:updateManagerSystemState.activeUpdateId,totalUpdatesApplied:updateManagerSystemState.totalUpdatesApplied,totalRollbacksTriggered:updateManagerSystemState.totalRollbacksTriggered,untrustedRejectionsCount:updateManagerSystemState.untrustedRejectionsCount,trustedSignaturesVerifiedCount:updateManagerSystemState.trustedSignaturesVerifiedCount},
     strategyGeneratorState
