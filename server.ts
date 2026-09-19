@@ -2648,7 +2648,7 @@ let lastLiveAutoTradeAt=0;
 let lastLiveAutoSweepAt=0;
 
 async function runLiveAutonomousCycle(){
-  if(process.env.LIVE_AUTONOMOUS_ENABLED!=='true'||engineStatus!=='RUNNING'||tradingMode!=='LIVE_VAULT')return;
+  if(engineStatus!=='RUNNING'||tradingMode!=='LIVE_VAULT')return;
   const engine=getLiveEngine();
   const snap=await engine.sync(['BTC/USDT','ETH/USDT','SOL/USDT','LINK/USDT']);
   const today=new Date().toISOString().slice(0,10);
@@ -2659,6 +2659,7 @@ async function runLiveAutonomousCycle(){
     if(liveDrawdown>=Number(process.env.MAX_DRAWDOWN||0.10)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DRAWDOWN_PAUSE',{drawdownPercent:liveDrawdown,limitPercent:Number(process.env.MAX_DRAWDOWN||0.10)*100},'CRITICAL');return;}
   const dailyLoss=((snap.navUsdt-liveDayStartNav)/Math.max(1,liveDayStartNav))*100;
   if(dailyLoss<=-Number(process.env.MAX_DAILY_LOSS||0.03)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DAILY_LOSS_PAUSE',{dailyLoss,limitPercent:Number(process.env.MAX_DAILY_LOSS||0.03)*100},'CRITICAL');return;}
+  if(process.env.LIVE_AUTONOMOUS_ENABLED!=='true')return;
   if(Date.now()-lastLiveAutoTradeAt<15*60*1000)return;
 
   const symbol='BTC/USDT';
