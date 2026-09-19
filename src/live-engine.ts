@@ -28,6 +28,13 @@ export class LiveTradingEngine{
   if(amount<10)throw new Error('Live order blocked: order value is below the $10 USDT safety floor.');
   if(side==='BUY'){if(amount>snapshot.freeUsdt)throw new Error('Insufficient free USDT balance.');return this.client.placeOrder({symbol,side,type:'MARKET',quoteOrderQty:Number(amount.toFixed(2)),clientOrderId:'ky7_'+Date.now()+'_'+Math.random().toString(36).slice(2,8)});}
   const asset=symbol.split('/')[0];const free=snapshot.balances.find(b=>b.asset===asset)?.free||0;const price=snapshot.prices[symbol];if(!price||free*price<amount)throw new Error('Insufficient free base-asset balance for sell.');
-  const quantity=amount/price;return this.client.placeOrder({symbol,side,type:'MARKET',quantity,clientOrderId:'ky7_'+Date.now()+'_'+Math.random().toString(36).slice(2,8)});
+  const quantityRaw=amount/price;
+  const info=await this.client.exchangeInfo(symbol);
+  const filters=info?.symbols?.[0]?.filters||[];
+  const lot=filters.find((f:any)=>f.filterType==='LOT_SIZE'||f.filterType==='MARKET_LOT_SIZE');
+  const step=Number(lot?.stepSize||0);
+  const quantity=step>0?Math.floor(quantityRaw/step)*step:quantityRaw;
+  if(quantity<=0||Number(lot?.minQty||0)>quantity)throw new Error('Live sell blocked: quantity is below the exchange LOT_SIZE minimum.');
+  return this.client.placeOrder({symbol,side,type:'MARKET',quantity,clientOrderId:'ky7_'+Date.now()+'_'+Math.random().toString(36).slice(2,8)});
  }
 }
