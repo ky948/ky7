@@ -2643,6 +2643,7 @@ const bootTimestamp = Date.now();
 
 let liveRiskDay= new Date().toISOString().slice(0,10);
 let liveDayStartNav: number | null = null;
+let livePeakNav: number | null = null;
 let lastLiveAutoTradeAt=0;
 let lastLiveAutoSweepAt=0;
 
@@ -2653,6 +2654,9 @@ async function runLiveAutonomousCycle(){
   const today=new Date().toISOString().slice(0,10);
   if(today!==liveRiskDay){liveRiskDay=today;liveDayStartNav=snap.navUsdt;}
   if(liveDayStartNav===null)liveDayStartNav=snap.navUsdt;
+    if(livePeakNav===null||snap.navUsdt>livePeakNav)livePeakNav=snap.navUsdt;
+    const liveDrawdown=livePeakNav>0?((livePeakNav-snap.navUsdt)/livePeakNav)*100:0;
+    if(liveDrawdown>=Number(process.env.MAX_DRAWDOWN||0.10)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DRAWDOWN_PAUSE',{drawdownPercent:liveDrawdown,limitPercent:Number(process.env.MAX_DRAWDOWN||0.10)*100},'CRITICAL');return;}
   const dailyLoss=((snap.navUsdt-liveDayStartNav)/Math.max(1,liveDayStartNav))*100;
   if(dailyLoss<=-Number(process.env.MAX_DAILY_LOSS||0.03)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DAILY_LOSS_PAUSE',{dailyLoss,limitPercent:Number(process.env.MAX_DAILY_LOSS||0.03)*100},'CRITICAL');return;}
   if(Date.now()-lastLiveAutoTradeAt<15*60*1000)return;
