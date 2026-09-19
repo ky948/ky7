@@ -1,0 +1,102 @@
+name: deploy-ky7-aws
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ky7-aws-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  ECR_REPOSITORY: ky7
+  TERRAFORM_DIR: infra/aws
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ky7-github-actions
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform init
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: terraform init
+      - name: Terraform validate
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: terraform validate
+      - name: Bootstrap AWS infrastructure without starting ECS
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        env:
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          ROUTE53_ZONE_ID: ${{ vars.ROUTE53_ZONE_ID }}
+        run: |
+          test -n "$DOMAIN_NAME"
+          test -n "$ROUTE53_ZONE_ID"
+          terraform apply -auto-approve             -var="aws_region=$AWS_REGION"             -var="domain_name=$DOMAIN_NAME"             -var="route53_zone_id=$ROUTE53_ZONE_ID"             -var="image_uri="
+      - name: Verify required Secrets Manager values exist
+        run: |
+          set -euo pipefail
+          for secret in ky7-production/gemini-api-key ky7-production/binance-api-key ky7-production/binance-api-secret ky7-production/destination-wallet ky7-production/destination-network; do
+            value="$(aws secretsmanager get-secret-value --secret-id "$secret" --query SecretString --output text 2>/dev/null || true)"
+            if [ -z "$value" ] || [ "$value" = "None" ]; then
+              echo "Secret is missing a value: $secret"
+              exit 1
+            fi
+          done
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push immutable ARM64 image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/arm64 --pull --tag "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" --push .
+          echo "IMAGE_URI=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_ENV"
+      - name: Deploy image to ECS
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        env:
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          ROUTE53_ZONE_ID: ${{ vars.ROUTE53_ZONE_ID }}
+        run: |
+          terraform apply -auto-approve             -var="aws_region=$AWS_REGION"             -var="domain_name=$DOMAIN_NAME"             -var="route53_zone_id=$ROUTE53_ZONE_ID"             -var="image_uri=$IMAGE_URI"
+      - name: Wait for ECS service stability
+        run: aws ecs wait services-stable --cluster ky7-production --services ky7-production
+      - name: Verify target health
+        run: |
+          TG_ARN="$(aws elbv2 describe-target-groups --names ky7-prod --query 'TargetGroups[0].TargetGroupArn' --output text)"
+          aws elbv2 describe-target-health --target-group-arn "$TG_ARN"
+      - name: Print deployment outputs
+        working-directory: ${{ env.TERRAFORM_DIR }}
+        run: |
+          terraform output app_url
+          terraform output nat_public_ips
+          terraform output cognito_user_pool_id
