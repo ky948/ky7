@@ -1,0 +1,99 @@
+name: deploy-ky7-cloud-run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ky7-production
+  cancel-in-progress: false
+
+env:
+  SERVICE_NAME: ky7
+  REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  REPOSITORY: ky7
+  IMAGE: ${{ vars.GCP_REGION || 'us-central1' }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ky7/ky7:${{ github.sha }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to Google Cloud with GitHub OIDC
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker authentication
+        run: gcloud auth configure-docker ${GCP_REGION}-docker.pkg.dev --quiet
+
+      - name: Ensure Artifact Registry repository exists
+        run: |
+          gcloud artifacts repositories describe "$REPOSITORY" --location="$REGION" --project="${{ secrets.GCP_PROJECT_ID }}" >/dev/null 2>&1 || gcloud artifacts repositories create "$REPOSITORY" --repository-format=docker --location="$REGION" --project="${{ secrets.GCP_PROJECT_ID }}" --description="KY7 production container images"
+
+      - name: Build and push image
+        run: |
+          docker build --pull -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Verify required Secret Manager secrets exist
+        run: |
+          set -euo pipefail
+          for secret in ky7-gemini-api-key ky7-binance-api-key ky7-binance-api-secret; do
+            gcloud secrets describe "$secret" --project="${{ secrets.GCP_PROJECT_ID }}" >/dev/null
+          done
+
+      - name: Deploy Cloud Run service
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$SERVICE_NAME" \
+            --image="$IMAGE" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --region="$REGION" \
+            --platform=managed \
+            --port=3000 \
+            --min=1 \
+            --max=1 \
+            --concurrency=20 \
+            --cpu=2 \
+            --memory=1Gi \
+            --timeout=300 \
+            --no-cpu-throttling \
+            --allow-unauthenticated \
+            --set-env-vars="NODE_ENV=production,PORT=3000,TRADING_MODE=LIVE_VAULT,LIVE_AUTONOMOUS_ENABLED=false,MAX_CAPITAL_ALLOCATION=0.25,MAX_POSITION_SIZE=0.10,MAX_DAILY_LOSS=0.03,MAX_DRAWDOWN=0.10,BINANCE_BASE_URL=https://api.binance.com,BINANCE_RECV_WINDOW=5000,BINANCE_IP_RESTRICTION_REQUIRED=true,BINANCE_ENABLE_WITHDRAWALS=false,PROFIT_SWEEP_ENABLED=false,LIVE_PRINCIPAL_USDT=0" \
+            --update-secrets="GEMINI_API_KEY=ky7-gemini-api-key:latest,BINANCE_API_KEY=ky7-binance-api-key:latest,BINANCE_API_SECRET=ky7-binance-api-secret:latest"
+
+      - name: Verify deployed service
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "$SERVICE_NAME" --project="${{ secrets.GCP_PROJECT_ID }}" --region="$REGION" --format='value(status.url)')"
+          echo "KY7 URL: $URL"
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$URL/api/health"
+          echo
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$URL/api/trading/live-readiness"
+          echo
