@@ -49,9 +49,11 @@ jobs:
       - name: Terraform init
         working-directory: ${{ env.TERRAFORM_DIR }}
         run: terraform init
-      - name: Terraform validate
+      - name: Terraform format and validate
         working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform validate
+        run: |
+          terraform fmt -recursive
+          terraform validate
       - name: Bootstrap AWS infrastructure without starting ECS
         working-directory: ${{ env.TERRAFORM_DIR }}
         env:
