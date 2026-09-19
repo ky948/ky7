@@ -3638,10 +3638,18 @@ app.post('/api/trading/incubator/degradation-scan', (req, res) => {
 });
 
 // Owner Cold Storage Profit Sweeper APIs
-app.get('/api/trading/profit-sweep', (req, res) => {
-  portfolio.eligibleSweepUsdt = Math.max(0, Number((portfolio.realizedPnlUsdt - profitSweeperConfig.totalSweptUsdt).toFixed(2)));
-  profitSweeperConfig.pendingEligibleUsdt = portfolio.eligibleSweepUsdt;
-  res.json({ profitSweeperConfig, eligibleSweepUsdt: portfolio.eligibleSweepUsdt });
+app.get('/api/trading/profit-sweep', async (req,res)=>{
+  if(tradingMode==='LIVE_VAULT'&&binanceConfigured()){
+    try{
+      const s=await getLiveEngine().sync();
+      const principal=Number(process.env.LIVE_PRINCIPAL_USDT||0);
+      const eligible=Math.max(0,Number((s.freeUsdt-principal).toFixed(2)));
+      return res.json({profitSweeperConfig,eligibleSweepUsdt:eligible,source:'LIVE_USDT_BALANCE_MINUS_PRINCIPAL',principalUsdt:principal,freeUsdt:s.freeUsdt});
+    }catch(error:any){return res.status(502).json({error:error?.message||String(error)});}
+  }
+  portfolio.eligibleSweepUsdt=Math.max(0,Number((portfolio.realizedPnlUsdt-profitSweeperConfig.totalSweptUsdt).toFixed(2)));
+  profitSweeperConfig.pendingEligibleUsdt=portfolio.eligibleSweepUsdt;
+  res.json({profitSweeperConfig,eligibleSweepUsdt:portfolio.eligibleSweepUsdt,source:'PAPER_SIMULATION'});
 });
 
 app.post('/api/trading/profit-sweep/update', (req, res) => {
@@ -3666,8 +3674,15 @@ app.post('/api/trading/profit-sweep/execute', async (req, res) => {
   const { sweepPercentage = profitSweeperConfig.sweepPercentage } = req.body;
   if (tradingMode !== 'LIVE_VAULT') return res.status(409).json({ error: 'Real withdrawals require LIVE_VAULT mode.' });
   if (!profitSweeperConfig.destinationWallet) return res.status(400).json({ error: 'DESTINATION_WALLET is not configured.' });
-  const sweepAmount = Number((portfolio.eligibleSweepUsdt * (Number(sweepPercentage) / 100)).toFixed(2));
-  if (sweepAmount < profitSweeperConfig.minThresholdUsdt) return res.status(400).json({ error: 'Eligible realized profit is below the configured sweep threshold.' });
+  let eligible=portfolio.eligibleSweepUsdt;
+  if(tradingMode==='LIVE_VAULT'){
+    const s=await getLiveEngine().sync();
+    const principal=Number(process.env.LIVE_PRINCIPAL_USDT||0);
+    eligible=Math.max(0,Number((s.freeUsdt-principal).toFixed(2)));
+    if(principal<=0)return res.status(409).json({error:'LIVE_PRINCIPAL_USDT must be set before profit withdrawals are enabled.'});
+  }
+  const sweepAmount=Number((eligible*(Number(sweepPercentage)/100)).toFixed(2));
+  if(sweepAmount<profitSweeperConfig.minThresholdUsdt)return res.status(400).json({error:'Eligible profit balance is below the configured sweep threshold.'});
   try {
     const client = new BinanceSpotClient();
     const result = await client.withdraw({ coin: process.env.PROFIT_SWEEP_ASSET || 'USDT', address: profitSweeperConfig.destinationWallet, amount: sweepAmount, network: process.env.DESTINATION_NETWORK });
