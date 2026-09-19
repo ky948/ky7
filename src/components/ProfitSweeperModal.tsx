@@ -18,7 +18,7 @@ import { fetchProfitSweeper, updateProfitSweeper, executeProfitSweep } from '../
 interface ProfitSweeperModalProps {
   isOpen: boolean;
   onClose: () => void;
-  realizedPnlUsdt: number;
+  realizedPnlUsdt: number | null;
   onNotification?: (msg: string, type: 'SUCCESS' | 'ERROR' | 'WARNING') => void;
 }
 
@@ -32,7 +32,7 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
   const [destinationWallet, setDestinationWallet] = useState('');
   const [minThreshold, setMinThreshold] = useState(5000);
   const [sweepPercentage, setSweepPercentage] = useState(50);
-  const [autoSweepEnabled, setAutoSweepEnabled] = useState(true);
+  const [autoSweepEnabled, setAutoSweepEnabled] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isSweeping, setIsSweeping] = useState(false);
   const [selectedSweepPercent, setSelectedSweepPercent] = useState(50);
@@ -85,7 +85,7 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
       if (res.success) {
         setConfig(res.profitSweeperConfig);
         onNotification?.(
-          `Transferred $${res.sweepRecord.amountUsdt.toLocaleString()} USDT realized profit to cold storage (${res.sweepRecord.destinationWallet.slice(0, 8)}...).`,
+          `Transferred ${res.sweepRecord.amountUsdt.toLocaleString()} USDT above the principal reserve (${res.sweepRecord.destinationWallet.slice(0, 8)}...).`,
           'SUCCESS'
         );
       }
@@ -121,7 +121,7 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Autonomous and on-demand sweep of eligible realized profits to designated hardware cold wallet
+                On-demand transfer of eligible USDT above the protected principal reserve
               </p>
             </div>
           </div>
@@ -139,11 +139,11 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="bg-[#121b30] p-3.5 rounded-xl border border-[#1e2d4d]">
-              <span className="text-[11px] text-slate-400 block mb-1">CUMULATIVE REALIZED P&L</span>
+              <span className="text-[11px] text-slate-400 block mb-1">LIVE USDT PROFIT RESERVE</span>
               <span className="text-lg font-bold text-emerald-400">
-                +${realizedPnlUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {realizedPnlUsdt == null ? 'Live exchange P&L ledger' : `+${realizedPnlUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
               </span>
-              <span className="text-[10px] text-slate-500 block mt-0.5">Net of all trading fees & slippage</span>
+              <span className="text-[10px] text-slate-500 block mt-0.5">Live mode uses the configured principal reserve; exact realized P&L requires the persistent trade ledger.</span>
             </div>
 
             <div className="bg-[#121b30] p-3.5 rounded-xl border border-[#1e2d4d]">
@@ -159,7 +159,7 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
               <span className="text-lg font-bold text-white">
                 ${eligibleAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
-              <span className="text-[10px] text-emerald-400/80 block mt-0.5">Available for transfer immediately</span>
+              <span className="text-[10px] text-emerald-400/80 block mt-0.5">Available above the protected principal reserve</span>
             </div>
           </div>
 
@@ -168,7 +168,7 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-200 flex items-center gap-1.5">
                 <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-                EXECUTE REALIZED PROFIT SWEEP NOW
+                EXECUTE PROFIT WITHDRAWAL NOW
               </span>
               <span className="text-[11px] text-slate-400">
                 Target: <strong className="text-cyan-300 font-mono">{destinationWallet.slice(0, 10)}...{destinationWallet.slice(-6)}</strong>
@@ -255,7 +255,7 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
                   className="rounded border-slate-700 text-cyan-500 focus:ring-0"
                 />
                 <span className="text-[11px] text-slate-300">
-                  Enable Periodic Autonomous Sweeping (Triggers when eligible profit exceeds ${minThreshold.toLocaleString()} USDT)
+                  Enable automatic sweeping only when both the server-side withdrawal gate and principal reserve are configured. Threshold: ${minThreshold.toLocaleString()} USDT)
                 </span>
               </label>
 
