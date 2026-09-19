@@ -16,9 +16,9 @@ Open the displayed local URL.
     # Set production secrets and infrastructure values.
     docker compose up -d --build
 
-The default trading mode is PAPER. Do not enable live trading until exchange credentials, risk limits, reconciliation, and sweep settings have been verified.
+Live mode is exchange-backed: set `TRADING_MODE=LIVE_VAULT` only in the deployment secret store. In live mode the dashboard reads Binance account state rather than the simulator. Autonomous live trading remains opt-in via `LIVE_AUTONOMOUS_ENABLED=true`.
 
-See docs/production-architecture.md for the production boundary and operating model.
+See `docs/production-architecture.md` and `docs/live-operations.md` for the production boundary, funding, withdrawals, and Cloud Run operating model.
 
 ## Important
 
