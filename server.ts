@@ -2644,6 +2644,7 @@ const bootTimestamp = Date.now();
 let liveRiskDay= new Date().toISOString().slice(0,10);
 let liveDayStartNav: number | null = null;
 let lastLiveAutoTradeAt=0;
+let lastLiveAutoSweepAt=0;
 
 async function runLiveAutonomousCycle(){
   if(process.env.LIVE_AUTONOMOUS_ENABLED!=='true'||engineStatus!=='RUNNING'||tradingMode!=='LIVE_VAULT')return;
@@ -2687,13 +2688,14 @@ const liveInterval=setInterval(async()=>{
     const dailyLoss=((snap.navUsdt-liveDayStartNav)/Math.max(1,liveDayStartNav))*100;
     if(dailyLoss<=-Number(process.env.MAX_DAILY_LOSS||0.03)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DAILY_LOSS_PAUSE',{dailyLoss},'CRITICAL');return;}
     if(engineStatus==='RUNNING')await runLiveAutonomousCycle();
-    if(process.env.PROFIT_SWEEP_ENABLED==='true'&&process.env.BINANCE_ENABLE_WITHDRAWALS==='true'&&profitSweeperConfig.autoSweepEnabled){
+    if(process.env.PROFIT_SWEEP_ENABLED==='true'&&process.env.BINANCE_ENABLE_WITHDRAWALS==='true'&&profitSweeperConfig.autoSweepEnabled&&Date.now()-lastLiveAutoSweepAt>=60*60*1000){
       const principal=Number(process.env.LIVE_PRINCIPAL_USDT||0);
       const eligible=Math.max(0,Number((snap.freeUsdt-principal).toFixed(2)));
       if(principal>0&&eligible>=profitSweeperConfig.minThresholdUsdt){
         const sweepAmount=Number((eligible*(profitSweeperConfig.sweepPercentage/100)).toFixed(2));
         if(sweepAmount>0){
           const result=await getLiveEngine().getClient().withdraw({coin:process.env.PROFIT_SWEEP_ASSET||'USDT',address:profitSweeperConfig.destinationWallet,amount:sweepAmount,network:process.env.DESTINATION_NETWORK});
+          lastLiveAutoSweepAt=Date.now();
           recordAudit('LIVE_AUTOMATIC_PROFIT_WITHDRAWAL_SUBMITTED',{amountUsdt:sweepAmount,destinationWallet:profitSweeperConfig.destinationWallet,withdrawalId:result?.id||result?.txId},'SECURITY');
         }
       }
