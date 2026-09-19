@@ -8,6 +8,10 @@ Internet -> Route 53 -> ACM HTTPS -> AWS WAF -> Application Load Balancer -> Cog
 
 The private task connects to RDS PostgreSQL and ElastiCache Redis, and outbound Binance traffic goes through a NAT Gateway with a fixed Elastic IP.
 
+## Terraform state
+
+The deployment creates a versioned S3 bucket named ky7-tfstate-<AWS_ACCOUNT_ID> and enables native S3 state locking. The GitHub deployment role therefore needs S3 permissions for that bucket in addition to the infrastructure permissions.
+
 ## GitHub OIDC
 
 Create a GitHub Actions IAM role restricted to repository ky948/ky7 and the production deployment environment. Store its ARN as AWS_DEPLOY_ROLE_ARN in the GitHub production environment. Set AWS_REGION to ap-south-1 unless another AWS region is desired.
