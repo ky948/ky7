@@ -1,0 +1,18 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ky7
+  annotations:
+    run.googleapis.com/minScale: "1"
+    run.googleapis.com/maxScale: "1"
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      containerConcurrency: 20
+      containers:
+        - image: REPLACE_WITH_CLOUD_RUN_IMAGE
+          ports:
+            - containerPort: 3000
