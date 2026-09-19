@@ -2641,8 +2641,56 @@ const bootTimestamp = Date.now();
 
 // Simulation & Quantitative Engine Tick Loop (Every 2.5s)
 
-setInterval(() => {
-  if (engineStatus === 'KILL_SWITCHED') return;
+let liveRiskDay= new Date().toISOString().slice(0,10);
+let liveDayStartNav: number | null = null;
+let lastLiveAutoTradeAt=0;
+
+async function runLiveAutonomousCycle(){
+  if(process.env.LIVE_AUTONOMOUS_ENABLED!=='true'||engineStatus!=='RUNNING'||tradingMode!=='LIVE_VAULT')return;
+  const engine=getLiveEngine();
+  const snap=await engine.sync(['BTC/USDT','ETH/USDT','SOL/USDT','LINK/USDT']);
+  const today=new Date().toISOString().slice(0,10);
+  if(today!==liveRiskDay){liveRiskDay=today;liveDayStartNav=snap.navUsdt;}
+  if(liveDayStartNav===null)liveDayStartNav=snap.navUsdt;
+  const dailyLoss=((snap.navUsdt-liveDayStartNav)/Math.max(1,liveDayStartNav))*100;
+  if(dailyLoss<=-Number(process.env.MAX_DAILY_LOSS||0.03)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DAILY_LOSS_PAUSE',{dailyLoss,limitPercent:Number(process.env.MAX_DAILY_LOSS||0.03)*100},'CRITICAL');return;}
+  if(Date.now()-lastLiveAutoTradeAt<15*60*1000)return;
+
+  const symbol='BTC/USDT';
+  const rows=await engine.getClient().klines(symbol,'5m',60);
+  const closes=rows.map((r:any)=>Number(r[4]));
+  if(closes.length<25)return;
+  const ema=(period:number)=>{const k=2/(period+1);let e=closes[0];for(let i=1;i<closes.length;i++)e=closes[i]*k+e*(1-k);return e;};
+  const e9=ema(9),e21=ema(21);
+  const base=snap.balances.find(b=>b.asset==='BTC');
+  const btcValue=(base?.total||0)*(snap.prices[symbol]||0);
+  const target=Math.min(snap.navUsdt*Number(process.env.MAX_POSITION_SIZE||0.10),snap.navUsdt*Number(process.env.MAX_CAPITAL_ALLOCATION||0.25));
+  if(e9>e21 && btcValue<target*0.5 && snap.freeUsdt>=Math.max(10,target)){
+    const result=await engine.placeSpotMarket(symbol,'BUY',target);
+    lastLiveAutoTradeAt=Date.now();
+    recordAudit('LIVE_AUTONOMOUS_ENTRY',{symbol,side:'BUY',quoteValue:target,orderId:result.orderId,ema9:e9,ema21:e21},'SECURITY');
+  }else if(e9<e21 && btcValue>10){
+    const result=await engine.placeSpotMarket(symbol,'SELL',Math.min(btcValue,target));
+    lastLiveAutoTradeAt=Date.now();
+    recordAudit('LIVE_AUTONOMOUS_EXIT',{symbol,side:'SELL',quoteValue:Math.min(btcValue,target),orderId:result.orderId,ema9:e9,ema21:e21},'SECURITY');
+  }
+}
+
+const liveInterval=setInterval(async()=>{
+  if(tradingMode!=='LIVE_VAULT'||!binanceConfigured())return;
+  try{
+    ticksProcessed++;
+    const snap=await getLiveEngine().sync();
+    const today=new Date().toISOString().slice(0,10);
+    if(today!==liveRiskDay){liveRiskDay=today;liveDayStartNav=snap.navUsdt;}
+    if(liveDayStartNav===null)liveDayStartNav=snap.navUsdt;
+    const dailyLoss=((snap.navUsdt-liveDayStartNav)/Math.max(1,liveDayStartNav))*100;
+    if(dailyLoss<=-Number(process.env.MAX_DAILY_LOSS||0.03)*100){engineStatus='PAUSED';recordAudit('LIVE_RISK_DAILY_LOSS_PAUSE',{dailyLoss},'CRITICAL');return;}
+    if(engineStatus==='RUNNING')await runLiveAutonomousCycle();
+  }catch(error:any){recordAudit('LIVE_RECONCILIATION_ERROR',{error:error?.message||String(error)},'CRITICAL');}
+},5000);
+
+const simulationInterval=setInterval(()=>{  if (engineStatus === 'KILL_SWITCHED') return;
 
   ticksProcessed++;
   const symbols = Object.keys(initialAssets);
@@ -2806,8 +2854,7 @@ setInterval(() => {
   if (updateManagerSystemState.autoCheckEnabled && ticksProcessed % 12 === 0) {
     checkAllUpdateCategoriesInternal();
   }
-}, 2500);
-
+},2500);
 function executeProfitSweepInternal(percentage: number, trigger: string) {
   const sweepAmount = Number((portfolio.eligibleSweepUsdt * (percentage / 100)).toFixed(2));
   if (sweepAmount <= 0) return null;
