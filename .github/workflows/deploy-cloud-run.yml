@@ -33,6 +33,7 @@ jobs:
       - run: npm run build
 
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.DEPLOY_CLOUD_RUN == 'true' }}
     needs: validate
     runs-on: ubuntu-latest
     environment:
