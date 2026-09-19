@@ -31,6 +31,7 @@ jobs:
       - run: npm run build
 
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.AWS_DEPLOY_ENABLED == 'true' }}
     needs: validate
     runs-on: ubuntu-latest
     environment:
