@@ -3295,8 +3295,10 @@ app.post('/api/trading/withdraw-profit', async (req,res)=>{
   if(process.env.BINANCE_ENABLE_WITHDRAWALS!=='true')return res.status(409).json({error:'BINANCE_ENABLE_WITHDRAWALS is false.'});
   if(!address||address!==process.env.DESTINATION_WALLET)return res.status(400).json({error:'Withdrawal address must exactly match DESTINATION_WALLET.'});
   try{
-    const snapshot=await getLiveEngine().sync(); const balance=snapshot.balances.find(b=>b.asset===asset)?.free||0; const n=Number(amount);
-    if(!Number.isFinite(n)||n<=0||n>balance)return res.status(400).json({error:'Invalid withdrawal amount or insufficient available balance.'});
+    const snapshot=await getLiveEngine().sync(); const balance=snapshot.balances.find(b=>b.asset===asset)?.free||0; const principal=Number(process.env.LIVE_PRINCIPAL_USDT||0); const n=Number(amount);
+    if(asset==='USDT'&&principal<=0)return res.status(409).json({error:'LIVE_PRINCIPAL_USDT must be set before profit withdrawals are enabled.'});
+    const eligible=asset==='USDT'?Math.max(0,balance-principal):balance;
+    if(!Number.isFinite(n)||n<=0||n>eligible)return res.status(400).json({error:'Withdrawal exceeds the available profit amount after principal reserve.'});
     const result=await getLiveEngine().getClient().withdraw({coin:asset,address,amount:n,network:network||process.env.DESTINATION_NETWORK});
     recordAudit('LIVE_BINANCE_WITHDRAWAL_SUBMITTED',{asset,amount:n,address,network:network||process.env.DESTINATION_NETWORK,withdrawalId:result?.id||result?.id},'SECURITY');
     res.json({success:true,exchange:'BINANCE',withdrawal:result});
