@@ -34,7 +34,7 @@ import { AutonomousOptimizerModal } from './components/AutonomousOptimizerModal'
 import { ProfitSweeperModal } from './components/ProfitSweeperModal';
 import { AutonomousLearningLoopModal } from './components/AutonomousLearningLoopModal';
 import { AutonomousUpdateManagerModal } from './components/AutonomousUpdateManagerModal';
-import { ShieldAlert, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { ShieldAlert, AlertCircle, CheckCircle2, Wallet, ExternalLink } from 'lucide-react';
 
 export default function App() {
   const [tradingState, setTradingState] = useState<FullTradingState | null>(null);
@@ -347,6 +347,17 @@ export default function App() {
           updateManagerState={tradingState.updateManagerState}
           onOpenUpdateManager={() => setIsUpdateManagerOpen(true)}
         />
+      )}
+
+      {/* Live funding rail */}
+      {tradingState?.tradingMode === 'LIVE_VAULT' && (
+        <div className="mx-3 mt-3 rounded-xl border border-cyan-900/50 bg-[#0b1220] px-4 py-3 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2"><Wallet className="w-4 h-4 text-cyan-400" /><span className="text-xs font-mono text-slate-300">LIVE BINANCE FUNDING</span></div>
+          <span className="text-xs font-mono text-slate-400">Free USDT: <strong className="text-cyan-300">${Number((tradingState as any).liveAccount?.freeUsdt || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></span>
+          <span className="text-xs font-mono text-slate-400">Account NAV: <strong className="text-slate-200">${Number((tradingState as any).liveAccount?.navUsdt || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong></span>
+          <button type="button" onClick={() => window.open('https://www.binance.com/en/fiat/deposit/USD','_blank','noopener,noreferrer')} className="ml-auto inline-flex items-center gap-2 rounded-lg border border-cyan-700/60 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50">Deposit USD on Binance <ExternalLink className="w-3.5 h-3.5" /></button>
+          <span className="w-full text-[10px] text-slate-500">KY7 does not custody fiat. Deposit availability and payment methods are determined by Binance and your region/account eligibility.</span>
+        </div>
       )}
 
       {/* Main Trading Cockpit Grid */}
