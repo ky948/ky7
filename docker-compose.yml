@@ -6,9 +6,12 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      TRADING_MODE: PAPER
+      TRADING_MODE: ${TRADING_MODE:-PAPER}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-ky7}
+      POSTGRES_USER: ${POSTGRES_USER:-ky7}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       REDIS_URL: redis://redis:6379
     ports:
       - "3000:3000"
@@ -27,14 +30,14 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ky7
-      POSTGRES_USER: ky7
-      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: ${POSTGRES_DB:-ky7}
+      POSTGRES_USER: ${POSTGRES_USER:-ky7}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U ky7 -d ky7"]
+      test: ["CMD-SHELL","pg_isready -U ${POSTGRES_USER:-ky7} -d ${POSTGRES_DB:-ky7}"]
       interval: 10s
       timeout: 5s
       retries: 5
