@@ -18,7 +18,7 @@ Open the displayed local URL.
 
 Live mode is exchange-backed: set `TRADING_MODE=LIVE_VAULT` only in the deployment secret store. In live mode the dashboard reads Binance account state rather than the simulator. Autonomous live trading remains opt-in via `LIVE_AUTONOMOUS_ENABLED=true`.
 
-See `docs/production-architecture.md` and `docs/live-operations.md` for the production boundary, funding, withdrawals, and Cloud Run operating model.
+See `docs/production-architecture.md`, `docs/live-operations.md`, and `docs/aws-deployment.md` for the production boundary, funding, withdrawals, and AWS operating model.
 
 ## Important
 
