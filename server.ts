@@ -18,9 +18,12 @@ import {
   StrategyGeneratorState,
 } from './src/types';
 import { BinanceSpotClient, binanceConfigured } from './src/binance';
+import { LiveTradingEngine } from './src/live-engine';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
+let liveEngine: LiveTradingEngine | null = null;
+function getLiveEngine(){ if(!binanceConfigured()) throw new Error('Binance live credentials are not configured in the server secret store.'); if(!liveEngine) liveEngine=new LiveTradingEngine(); return liveEngine; }
 app.use(express.json());
 
 // Initialize Gemini Client
@@ -2983,77 +2986,72 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/trading/live-readiness', async (req, res) => {
-  const configured = binanceConfigured();
-  if (!configured) return res.json({ ready: false, tradingMode, reason: 'Binance credentials are not configured.' });
+  if (!binanceConfigured()) return res.json({ ready:false, tradingMode, exchange:'BINANCE', reason:'Binance credentials are not configured.' });
   try {
-    const client = new BinanceSpotClient();
-    const permissions = await client.accountRestrictions();
-    const ready = permissions?.enableReading === true && permissions?.enableSpotAndMarginTrading === true;
-    res.json({ ready, tradingMode, exchange: 'BINANCE', permissions: { enableReading: permissions?.enableReading, enableSpotAndMarginTrading: permissions?.enableSpotAndMarginTrading, enableWithdrawals: permissions?.enableWithdrawals, ipRestrict: permissions?.ipRestrict } });
-  } catch (error:any) {
-    res.status(502).json({ ready:false, tradingMode, exchange:'BINANCE', error:error?.message || String(error) });
+    const readiness=await getLiveEngine().readiness();
+    const ipRequired=process.env.BINANCE_IP_RESTRICTION_REQUIRED!=='false';
+    const ready=readiness.ready && (!ipRequired || readiness.permissions.ipRestrict===true);
+    res.json({ ready, tradingMode, exchange:'BINANCE', ...readiness, ipRestrictionRequired:ipRequired });
+  } catch(error:any) {
+    res.status(502).json({ready:false,tradingMode,exchange:'BINANCE',error:error?.message||String(error)});
   }
 });
 
-app.get('/api/trading/state', (req, res) => {
-  const assetsArray = Object.values(initialAssets).map((a) => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { candles, ...summary } = a;
-    return summary;
-  });
+app.get('/api/trading/state', async (req, res) => {
+  let liveSnapshot:any=null;
+  if(tradingMode==='LIVE_VAULT' && binanceConfigured()){
+    try{ liveSnapshot=await getLiveEngine().sync(); }
+    catch(error:any){
+      return res.status(502).json({error:'Live exchange state unavailable; trading state intentionally not fabricated.',detail:error?.message||String(error),tradingMode});
+    }
+  }
 
-  const systemHealth = {
-    uptimeSeconds: Math.floor((Date.now() - bootTimestamp) / 1000),
-    eventLoopLagMs: Number((1.2 + Math.random() * 0.8).toFixed(1)),
-    memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+  const assetsArray=liveSnapshot
+    ? Object.entries(liveSnapshot.tickers).map(([raw,t]:any)=>({
+        symbol:raw.replace(/([A-Z]+)(USDT)$/,'$1/USDT'),
+        name:raw.replace('USDT',''),
+        price:Number(t.lastPrice), change24h:Number(t.priceChangePercent),
+        high24h:Number(t.highPrice), low24h:Number(t.lowPrice), volume24h:Number(t.quoteVolume),
+        vwap:Number(t.weightedAvgPrice), rsi:null, ema9:null, ema21:null, ema50:null,
+        orderBookImbalance:null, atr:null
+      }))
+    : Object.values(initialAssets).map((a)=>{const {candles,...summary}=a;return summary;});
+
+  const livePortfolio=liveSnapshot?{
+    ...portfolio,
+    navUsdt:liveSnapshot.navUsdt,
+    availableMarginUsdt:liveSnapshot.freeUsdt,
+    unrealizedPnlUsdt:null,
+    realizedPnlUsdt:null,
+    eligibleSweepUsdt:null,
+    totalSweptUsdt:null,
+    pnlSource:'EXCHANGE_BALANCE_RECONCILIATION_REQUIRED'
+  }:portfolio;
+
+  const systemHealth={
+    uptimeSeconds:Math.floor((Date.now()-bootTimestamp)/1000),
+    eventLoopLagMs:null,
+    memoryUsageMb:Math.round(process.memoryUsage().heapUsed/1024/1024),
     ticksProcessed,
-    lastTickTimestamp: Date.now(),
-    authorizedOwner: AUTHORIZED_OWNER.email,
-    securityLevel: AUTHORIZED_OWNER.securityLevel,
-    vaultStatus: vaultConfig.status,
-    ipWhitelistVerified: AUTHORIZED_OWNER.ipWhitelistVerified,
+    lastTickTimestamp:liveSnapshot?.timestamp||null,
+    authorizedOwner:AUTHORIZED_OWNER.email,
+    securityLevel:AUTHORIZED_OWNER.securityLevel,
+    vaultStatus:vaultConfig.status,
+    ipWhitelistVerified:process.env.BINANCE_IP_RESTRICTION_REQUIRED!=='false'
   };
 
   res.json({
-    engineStatus,
-    tradingMode,
-    portfolio,
-    riskSettings,
-    strategies,
-    assets: assetsArray,
-    activePositions,
-    openOrders,
-    tradeHistory: tradeHistory.slice(0, 30),
-    signalFeed: signalFeed.slice(0, 30),
-    vaultConfig: {
-      exchange: vaultConfig.exchange,
-      apiKeyMasked: vaultConfig.apiKeyMasked,
-      apiSecretSet: vaultConfig.apiSecretSet,
-      status: vaultConfig.status,
-      withdrawalsEnabled: vaultConfig.withdrawalsEnabled,
-      whitelistedIPOnly: vaultConfig.whitelistedIPOnly,
-    },
-    systemHealth,
-    authorizedOwner: AUTHORIZED_OWNER,
-    gridConfigs,
-    profitSweeperConfig,
-    incubatedStrategies,
-    softwareComponents,
-    learningLoopState,
-    activeStrategyVersion: learningLoopState.activeVersion,
-    updateManagerState: {
-      currentSystemVersion: updateManagerSystemState.currentSystemVersion,
-      previousKnownGoodVersion: updateManagerSystemState.previousKnownGoodVersion,
-      lastCheckTimestamp: updateManagerSystemState.lastCheckTimestamp,
-      autoCheckEnabled: updateManagerSystemState.autoCheckEnabled,
-      isPipelineRunning: updateManagerSystemState.isPipelineRunning,
-      activeUpdateId: updateManagerSystemState.activeUpdateId,
-      totalUpdatesApplied: updateManagerSystemState.totalUpdatesApplied,
-      totalRollbacksTriggered: updateManagerSystemState.totalRollbacksTriggered,
-      untrustedRejectionsCount: updateManagerSystemState.untrustedRejectionsCount,
-      trustedSignaturesVerifiedCount: updateManagerSystemState.trustedSignaturesVerifiedCount,
-    },
-    strategyGeneratorState,
+    engineStatus,tradingMode,portfolio:livePortfolio,riskSettings,strategies,assets:assetsArray,
+    activePositions:liveSnapshot?[]:activePositions,
+    openOrders:liveSnapshot?liveSnapshot.openOrders:openOrders,
+    tradeHistory:liveSnapshot?[]:tradeHistory.slice(0,30),
+    signalFeed:liveSnapshot?[]:signalFeed.slice(0,30),
+    vaultConfig:{exchange:vaultConfig.exchange,apiKeyMasked:vaultConfig.apiKeyMasked,apiSecretSet:vaultConfig.apiSecretSet,status:vaultConfig.status,withdrawalsEnabled:vaultConfig.withdrawalsEnabled,whitelistedIPOnly:vaultConfig.whitelistedIPOnly},
+    liveAccount:liveSnapshot?{balances:liveSnapshot.balances,freeUsdt:liveSnapshot.freeUsdt,navUsdt:liveSnapshot.navUsdt,asOf:liveSnapshot.timestamp}:null,
+    systemHealth,authorizedOwner:AUTHORIZED_OWNER,gridConfigs,profitSweeperConfig,incubatedStrategies,softwareComponents,learningLoopState,
+    activeStrategyVersion:learningLoopState.activeVersion,
+    updateManagerState:{currentSystemVersion:updateManagerSystemState.currentSystemVersion,previousKnownGoodVersion:updateManagerSystemState.previousKnownGoodVersion,lastCheckTimestamp:updateManagerSystemState.lastCheckTimestamp,autoCheckEnabled:updateManagerSystemState.autoCheckEnabled,isPipelineRunning:updateManagerSystemState.isPipelineRunning,activeUpdateId:updateManagerSystemState.activeUpdateId,totalUpdatesApplied:updateManagerSystemState.totalUpdatesApplied,totalRollbacksTriggered:updateManagerSystemState.totalRollbacksTriggered,untrustedRejectionsCount:updateManagerSystemState.untrustedRejectionsCount,trustedSignaturesVerifiedCount:updateManagerSystemState.trustedSignaturesVerifiedCount},
+    strategyGeneratorState
   });
 });
 
@@ -3148,26 +3146,22 @@ app.post('/api/trading/position/update-sl-tp', (req, res) => {
 });
 
 // Manual Order Placement (Owner override)
-app.post('/api/trading/order/manual', async (req, res) => {
-  const { symbol, side, type, price, size } = req.body;
-  if (!symbol || !side || !type || !size) return res.status(400).json({ error: 'Missing required order fields' });
-  if (tradingMode === 'LIVE_VAULT') {
-    try {
-      const client = new BinanceSpotClient();
-      const result = await client.placeOrder({
-        symbol, side, type,
-        quantity: Number(size),
-        price: type === 'LIMIT' ? Number(price) : undefined,
-        clientOrderId: `ky7_${Date.now()}`,
-      });
-      recordAudit('LIVE_BINANCE_ORDER_SUBMITTED', { symbol, side, type, size, exchangeOrderId: result.orderId, clientOrderId: result.clientOrderId }, 'SECURITY');
-      return res.json({ success: true, live: true, exchange: 'BINANCE', order: result });
-    } catch (error:any) {
-      recordAudit('LIVE_BINANCE_ORDER_REJECTED', { symbol, side, type, size, error: error?.message || String(error) }, 'CRITICAL');
-      return res.status(502).json({ error: error?.message || 'Live exchange order failed' });
+app.post('/api/trading/order/manual', async (req,res)=>{
+  const {symbol,side,type,price,size}=req.body;
+  if(!symbol||!side||!type||!size)return res.status(400).json({error:'Missing required order fields'});
+  if(tradingMode==='LIVE_VAULT'){
+    if(type!=='MARKET')return res.status(400).json({error:'Live managed orders currently accept MARKET only; use exchange-native order management for limit/grid staging.'});
+    try{
+      const readiness=await getLiveEngine().readiness();
+      if(!readiness.ready)return res.status(409).json({error:'Live trading readiness failed.',readiness});
+      const result=await getLiveEngine().placeSpotMarket(symbol,side==='BUY'?'BUY':'SELL',Number(size));
+      recordAudit('LIVE_BINANCE_ORDER_SUBMITTED',{symbol,side,type,requestedQuoteValue:size,exchangeOrderId:result.orderId,clientOrderId:result.clientOrderId},'SECURITY');
+      return res.json({success:true,live:true,exchange:'BINANCE',order:result});
+    }catch(error:any){
+      recordAudit('LIVE_BINANCE_ORDER_REJECTED',{symbol,side,type,size,error:error?.message||String(error)},'CRITICAL');
+      return res.status(502).json({error:error?.message||'Live exchange order failed'});
     }
-  }
-  const asset = initialAssets[symbol];
+  }  const asset = initialAssets[symbol];
   if (!asset) return res.status(400).json({ error: 'Invalid symbol' });
   const orderPrice = type === 'MARKET' ? asset.price : Number(price);
   if (type === 'MARKET') {
@@ -3241,17 +3235,44 @@ app.post('/api/trading/vault/update', (req, res) => {
   res.json({ success: true, vaultConfig });
 });
 
+
+// Live funding / account endpoints. KY7 never holds fiat itself; Binance remains the funding venue.
+app.get('/api/funding/status', async (req,res)=>{
+  if(!binanceConfigured()) return res.json({connected:false,tradingMode,provider:'BINANCE'});
+  try{const s=await getLiveEngine().sync();res.json({connected:true,provider:'BINANCE',tradingMode,balances:s.balances,freeUsdt:s.freeUsdt,navUsdt:s.navUsdt,depositAsset:'USD/USDT',note:'Fund the connected Binance account using the Binance deposit flow; KY7 does not custody fiat.'});}
+  catch(error:any){res.status(502).json({connected:false,error:error?.message||String(error)});}
+});
+app.post('/api/trading/withdraw-profit', async (req,res)=>{
+  const {amount,asset='USDT',address,network}=req.body;
+  if(tradingMode!=='LIVE_VAULT')return res.status(409).json({error:'Withdrawals require LIVE_VAULT mode.'});
+  if(process.env.BINANCE_ENABLE_WITHDRAWALS!=='true')return res.status(409).json({error:'BINANCE_ENABLE_WITHDRAWALS is false.'});
+  if(!address||address!==process.env.DESTINATION_WALLET)return res.status(400).json({error:'Withdrawal address must exactly match DESTINATION_WALLET.'});
+  try{
+    const snapshot=await getLiveEngine().sync(); const balance=snapshot.balances.find(b=>b.asset===asset)?.free||0; const n=Number(amount);
+    if(!Number.isFinite(n)||n<=0||n>balance)return res.status(400).json({error:'Invalid withdrawal amount or insufficient available balance.'});
+    const result=await getLiveEngine().getClient().withdraw({coin:asset,address,amount:n,network:network||process.env.DESTINATION_NETWORK});
+    recordAudit('LIVE_BINANCE_WITHDRAWAL_SUBMITTED',{asset,amount:n,address,network:network||process.env.DESTINATION_NETWORK,withdrawalId:result?.id||result?.id},'SECURITY');
+    res.json({success:true,exchange:'BINANCE',withdrawal:result});
+  }catch(error:any){recordAudit('LIVE_BINANCE_WITHDRAWAL_REJECTED',{asset,amount,address,network,error:error?.message||String(error)},'CRITICAL');res.status(502).json({error:error?.message||'Withdrawal failed'});}
+});
+
 // Audit Log endpoint
 app.get('/api/trading/audit-logs', (req, res) => {
   res.json({ auditLogs: auditLog });
 });
 
 // Candle chart history for a symbol
-app.get('/api/trading/candles/:symbol', (req, res) => {
-  const sym = decodeURIComponent(req.params.symbol);
-  const asset = initialAssets[sym];
-  if (!asset) return res.status(404).json({ error: 'Symbol not found' });
-  res.json({ symbol: sym, candles: asset.candles });
+app.get('/api/trading/candles/:symbol', async (req,res)=>{
+  const sym=decodeURIComponent(req.params.symbol);
+  if(tradingMode==='LIVE_VAULT'&&binanceConfigured()){
+    try{
+      const rows=await getLiveEngine().getClient().klines(sym,'1m',200);
+      const candles=rows.map((r:any)=>({time:Number(r[0]),open:Number(r[1]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[5])}));
+      return res.json({symbol:sym,candles,source:'BINANCE'});
+    }catch(error:any){return res.status(502).json({error:error?.message||String(error)});}
+  }
+  const asset=initialAssets[sym]; if(!asset)return res.status(404).json({error:'Symbol not found'});
+  res.json({symbol:sym,candles:asset.candles,source:'SIMULATION'});
 });
 
 // Orderbook snapshot for a symbol
