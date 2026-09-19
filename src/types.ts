@@ -125,8 +125,8 @@ export interface RiskSettings {
 export interface PortfolioState {
   navUsdt: number;
   availableMarginUsdt: number;
-  unrealizedPnlUsdt: number;
-  realizedPnlUsdt: number;
+  unrealizedPnlUsdt: number | null;
+  realizedPnlUsdt: number | null;
   dailyStartingNavUsdt: number;
   winRate: number;
   totalTrades: number;
@@ -134,9 +134,10 @@ export interface PortfolioState {
   profitFactor: number;
   sharpeRatio: number;
   maxDrawdownPercent: number;
-  eligibleSweepUsdt?: number;
-  totalSweptUsdt?: number;
+  eligibleSweepUsdt?: number | null;
+  totalSweptUsdt?: number | null;
   liquidationDistancePercent?: number;
+  pnlSource?: string;
 }
 
 export interface GridLevel {

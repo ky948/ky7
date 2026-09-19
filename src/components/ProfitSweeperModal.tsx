@@ -98,7 +98,7 @@ export const ProfitSweeperModal: React.FC<ProfitSweeperModalProps> = ({
 
   if (!isOpen) return null;
 
-  const eligibleAmount = config?.pendingEligibleUsdt ?? Math.max(0, realizedPnlUsdt - (config?.totalSweptUsdt || 0));
+  const eligibleAmount = config?.pendingEligibleUsdt ?? Math.max(0, (realizedPnlUsdt ?? 0) - (config?.totalSweptUsdt || 0));
   const sweepAmountPreview = Number((eligibleAmount * (selectedSweepPercent / 100)).toFixed(2));
 
   return (

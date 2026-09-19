@@ -16,7 +16,7 @@ export class LiveTradingEngine{
    for(const s of symbols){const t=tickers[s.replace('/','').toUpperCase()];if(t)prices[s]=Number(t.lastPrice);}
    const balances=(account?.balances||[]).filter((b:any)=>Number(b.free)+Number(b.locked)>0).map((b:any)=>({asset:b.asset,free:Number(b.free),locked:Number(b.locked),total:Number(b.free)+Number(b.locked)}));
    let navUsdt=0; for(const b of balances){if(b.asset==='USDT'){navUsdt+=b.total;continue;} const p=prices[b.asset+'/USDT'];if(p)navUsdt+=b.total*p;}
-   const freeUsdt=balances.find(b=>b.asset==='USDT')?.free||0;
+   const freeUsdt=balances.find((b:any)=>b.asset==='USDT')?.free||0;
    this.last={balances,prices,tickers,openOrders,navUsdt,freeUsdt,timestamp:Date.now()}; return this.last;
   }finally{this.syncing=false;}
  }
@@ -27,7 +27,7 @@ export class LiveTradingEngine{
   const snapshot=await this.sync([symbol]);const amount=Math.min(quoteAmount,snapshot.navUsdt*maxAllocation,snapshot.navUsdt*maxPosition);
   if(amount<10)throw new Error('Live order blocked: order value is below the $10 USDT safety floor.');
   if(side==='BUY'){if(amount>snapshot.freeUsdt)throw new Error('Insufficient free USDT balance.');return this.client.placeOrder({symbol,side,type:'MARKET',quoteOrderQty:Number(amount.toFixed(2)),clientOrderId:'ky7_'+Date.now()+'_'+Math.random().toString(36).slice(2,8)});}
-  const asset=symbol.split('/')[0];const free=snapshot.balances.find(b=>b.asset===asset)?.free||0;const price=snapshot.prices[symbol];if(!price||free*price<amount)throw new Error('Insufficient free base-asset balance for sell.');
+  const asset=symbol.split('/')[0];const free=snapshot.balances.find((b:any)=>b.asset===asset)?.free||0;const price=snapshot.prices[symbol];if(!price||free*price<amount)throw new Error('Insufficient free base-asset balance for sell.');
   const quantityRaw=amount/price;
   const info=await this.client.exchangeInfo(symbol);
   const filters=info?.symbols?.[0]?.filters||[];

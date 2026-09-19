@@ -486,7 +486,7 @@ export default function App() {
           setIsProfitSweeperOpen(false);
           loadTradingState();
         }}
-        realizedPnlUsdt={tradingState?.portfolio?.realizedPnlUsdt || 0}
+        realizedPnlUsdt={tradingState?.portfolio?.realizedPnlUsdt ?? null}
         onNotification={(msg, type) => {
           showNotice(type === 'SUCCESS' ? 'SUCCESS' : type === 'ERROR' ? 'ERROR' : 'WARN', msg);
         }}

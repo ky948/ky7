@@ -32,11 +32,14 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({
   updateManagerState,
   onOpenUpdateManager,
 }) => {
-  const dailyPnl = portfolio.navUsdt - portfolio.dailyStartingNavUsdt;
-  const dailyPnlPercent = (dailyPnl / portfolio.dailyStartingNavUsdt) * 100;
+  const dailyStartingNav = portfolio.dailyStartingNavUsdt || portfolio.navUsdt || 1;
+  const dailyPnl = (portfolio.navUsdt ?? 0) - (portfolio.dailyStartingNavUsdt ?? portfolio.navUsdt ?? 0);
+  const dailyPnlPercent = (dailyPnl / dailyStartingNav) * 100;
   const isDailyPos = dailyPnl >= 0;
 
-  const isUnrealizedPos = portfolio.unrealizedPnlUsdt >= 0;
+  const unrealizedPnl = portfolio.unrealizedPnlUsdt;
+  const isUnrealizedPos = (unrealizedPnl ?? 0) >= 0;
+  const realizedPnl = portfolio.realizedPnlUsdt;
 
   return (
     <div id="metrics-bar" className="bg-[#0e1424] border-b border-[#1c273e] px-4 py-2.5 text-slate-200">
@@ -51,7 +54,7 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({
             <span className="text-[10px] text-slate-500">USDT</span>
           </div>
           <div className="text-base font-bold text-slate-100 tracking-tight">
-            ${portfolio.navUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${(portfolio.navUsdt ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className={`text-[11px] flex items-center gap-1 font-medium mt-0.5 ${isDailyPos ? 'text-emerald-400' : 'text-rose-400'}`}>
             {isDailyPos ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
@@ -68,10 +71,10 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({
             </span>
           </div>
           <div className="text-base font-bold text-slate-100 tracking-tight">
-            ${portfolio.availableMarginUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${(portfolio.availableMarginUsdt ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">
-            Util: {(((portfolio.navUsdt - portfolio.availableMarginUsdt) / portfolio.navUsdt) * 100).toFixed(1)}%
+            Util: {portfolio.navUsdt ? (((portfolio.navUsdt - (portfolio.availableMarginUsdt ?? 0)) / portfolio.navUsdt) * 100).toFixed(1) : '0.0'}%
           </div>
         </div>
 
@@ -83,8 +86,10 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({
               UNREALIZED PNL
             </span>
           </div>
-          <div className={`text-base font-bold tracking-tight ${isUnrealizedPos ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {isUnrealizedPos ? '+' : ''}${portfolio.unrealizedPnlUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <div className={`text-base font-bold tracking-tight ${unrealizedPnl == null ? 'text-slate-400' : isUnrealizedPos ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {unrealizedPnl == null
+              ? 'Exchange Mark'
+              : `${isUnrealizedPos ? '+' : ''}$${unrealizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">
             Mark-to-Market
@@ -100,7 +105,9 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({
             </span>
           </div>
           <div className="text-base font-bold text-emerald-400 tracking-tight">
-            +${portfolio.realizedPnlUsdt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {realizedPnl == null
+              ? 'Ledger Sync'
+              : `+${realizedPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">
             Cumulative net
@@ -211,13 +218,13 @@ export const MetricsBar: React.FC<MetricsBarProps> = ({
           <div>
             <span>Eligible Cold Sweep: </span>
             <strong className="text-emerald-400 font-bold">
-              ${(portfolio.eligibleSweepUsdt ?? Math.max(0, portfolio.realizedPnlUsdt - (portfolio.totalSweptUsdt || 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+              ${(portfolio.eligibleSweepUsdt ?? Math.max(0, (portfolio.realizedPnlUsdt ?? 0) - (portfolio.totalSweptUsdt || 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
             </strong>
           </div>
           <div>
             <span>Total Cold Swept: </span>
             <strong className="text-cyan-400 font-semibold">
-              ${(portfolio.totalSweptUsdt || 4000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+              ${((portfolio.totalSweptUsdt ?? 0) || 4000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
             </strong>
           </div>
         </div>

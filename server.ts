@@ -3056,7 +3056,7 @@ app.get('/api/trading/live-readiness', async (req, res) => {
     const readiness=await getLiveEngine().readiness();
     const ipRequired=process.env.BINANCE_IP_RESTRICTION_REQUIRED!=='false';
     const ready=readiness.ready && (!ipRequired || readiness.permissions.ipRestrict===true);
-    res.json({ ready, tradingMode, exchange:'BINANCE', ...readiness, ipRestrictionRequired:ipRequired });
+    res.json({ ...readiness, ready, tradingMode, exchange:'BINANCE', ipRestrictionRequired:ipRequired });
   } catch(error:any) {
     res.status(502).json({ready:false,tradingMode,exchange:'BINANCE',error:error?.message||String(error)});
   }
